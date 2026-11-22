@@ -1,176 +1,291 @@
-// Staged screenshot scenes and the road-following autopilot.
-// Shots run the real simulation forward in fixed steps from a seeded world,
-// so the same staging always produces the same scene.
-import { CFG } from './config.js';
-import { isSolid, route } from './city.js';
-import { angleDiff, clamp } from './random.js';
-import { addCar, spawnPolice, startMission, setHeat, stepWorld } from './world.js';
+// Staged screenshots + the road-following autopilot for VERDE BAY.
+// Shots are deterministic set-ups (fixed positions, fixed seed) so the
+// four images are stable across runs. The autopilot drives the game the
+// way a player would — route along the roads, brake for turns and
+// traffic, reverse out when stuck, enter cars and press E where the
+// mission needs it — and it is what the interactive play test uses.
 
-// Autopilot: drives the player (in a car, or on foot) along the road grid
-// toward a target, using the same routing as traffic and police.
-export function createAutopilot(w) {
-  const auto = { route: null, idx: 0, reverseT: 0, target: null, lastX: 0, lastY: 0, stuckT: 0 };
-  return {
-    setTarget(x, y) {
-      auto.target = { x, y };
-      auto.route = route(w.city, { x: w.player.x, y: w.player.y }, { x, y });
-      auto.idx = 0;
-      auto.reverseT = 0;
-      auto.lastX = w.player.x;
-      auto.lastY = w.player.y;
-      auto.stuckT = 0;
-    },
-    // True when there is no route or the route is finished. The driver
-    // in main.js re-targets when this is true, so a stale finished route
-    // can never leave the player standing still.
-    isDone() {
-      return !auto.route || auto.idx >= auto.route.length;
-    },
-    // Returns {up, down, left, right} for this frame.
-    input(dt) {
-      const p = w.player;
-      if (!auto.route || auto.idx >= auto.route.length) return { up: false, down: false, left: false, right: false };
-      // Stuck detection: in a car, crawling under 15 px/s while trying to
-      // drive means wedged against a building; on foot, barely moving
-      // means the same. Reverse out and re-route from here (a police ram
-      // or a wide turn can wedge the car; the waypoint alone never
-      // recovers it).
-      const moved = Math.hypot(p.x - auto.lastX, p.y - auto.lastY);
-      if (moved > 6) {
-        auto.lastX = p.x;
-        auto.lastY = p.y;
-      }
-      const crawling = p.car ? Math.abs(p.car.speed) < 15 : moved < 6;
-      if (crawling) auto.stuckT += dt;
-      else auto.stuckT = 0;
-      if (auto.stuckT > 1.2) {
-        auto.stuckT = 0;
-        auto.reverseT = 1.2;
-        if (auto.target) {
-          auto.route = route(w.city, { x: p.x, y: p.y }, auto.target);
-          auto.idx = 0;
-        }
-      }
-      const wp = auto.route[auto.idx];
-      const d = Math.hypot(wp.x - p.x, wp.y - p.y);
-      if (d < 40) {
-        auto.idx++;
-        return { up: false, down: false, left: false, right: false };
-      }
-      if (!p.car) {
-        // On foot, movement is absolute screen directions (WASD), not
-        // "forward + steer": aim straight at the waypoint.
-        const nx = (wp.x - p.x) / d;
-        const ny = (wp.y - p.y) / d;
-        return { up: ny < -0.3, down: ny > 0.3, left: nx < -0.3, right: nx > 0.3 };
-      }
-      const want = Math.atan2(wp.y - p.y, wp.x - p.x);
-      const diff = angleDiff(p.angle, want);
-      const speed = Math.abs(p.speed || 0);
-      if (auto.reverseT > 0) {
-        auto.reverseT -= dt;
-        return { up: false, down: true, left: diff > 0, right: diff < 0 };
-      }
-      // Wall ahead and nearly stopped: reverse out.
-      if (p.car) {
-        const px = p.x + Math.cos(p.angle) * 52;
-        const py = p.y + Math.sin(p.angle) * 52;
-        if (isSolid(w.city, px, py, 12) && speed < 12) {
-          auto.reverseT = 0.8;
-          return { up: false, down: true, left: false, right: false };
-        }
-      }
-      // Brake for turns instead of cutting the corner at full speed:
-      // a 300 px/s turn through an intersection clips the building.
-      // Also slow for the final approach: objectives sit inside blocks,
-      // not on roads, and arriving at 300 means grinding the wall.
-      // And brake for a car directly ahead instead of ramming through
-      // traffic at 300 (each hit is 12 damage; a busy road wrecks the car).
-      // (Braking overrides the throttle: drivePlayerCar reads up first.)
-      const aheadX = p.x + Math.cos(p.angle) * 70;
-      const aheadY = p.y + Math.sin(p.angle) * 70;
-      const carAhead = [...w.cars, ...w.police].some((c) => c !== p.car && !c.wrecked &&
-        Math.hypot(c.x - aheadX, c.y - aheadY) < 34);
-      const brake = (Math.abs(diff) > 0.7 && speed > 100) || (Math.abs(diff) > 1.3 && speed > 60) ||
-        (auto.idx === auto.route.length - 1 && d < 150 && speed > 120) ||
-        (carAhead && speed > 100);
-      return {
-        up: (Math.abs(diff) < 0.95 || speed < 40) && !brake,
-        down: brake,
-        left: diff < -0.07,
-        right: diff > 0.07,
-      };
-    },
-  };
+import { CFG } from './config.js';
+import { startMission } from './missions.js';
+
+const P = CFG.places;
+
+function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function angDiff(a, b) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
 }
 
-function putPlayerInCar(w, x, y, angle, color) {
-  const car = addCar(w, { kind: 'traffic', x, y, angle, parked: false, color, top: 320 });
-  car.driver = false;
+// Give the player a car at a fixed spot (used by the staged shots).
+function putPlayerInCar(w, x, y, angle, model, color) {
+  const car = w.addCar({ x, y, angle, model: model || 'sedan', color: color || '#3f6fb5', parked: false });
+  car.stolen = true; // no heat for a staged car
   w.player.car = car;
-  w.player.x = x;
-  w.player.y = y;
-  w.player.angle = angle;
+  w.player.x = x; w.player.y = y; w.player.angle = angle;
+  car.speed = 0;
   return car;
 }
 
-function fastForward(w, auto, seconds) {
-  const dt = 1 / 60;
-  const steps = Math.round(seconds / dt);
-  for (let i = 0; i < steps; i++) {
-    const a = auto.input(dt);
-    stepWorld(w, {
-      up: a.up, down: a.down, left: a.left, right: a.right,
-      sprint: false, handbrake: false, action: false, punch: false,
-      radio: false, shop: false, pause: false, confirm: false,
-    }, dt);
-    if (w.state !== 'play') break;
+export function stageShot(w, name) {
+  const p = w.player;
+  if (name === 'cover') {
+    // Four-star chase at Meridian Bank, mission 1 already done.
+    w.startGame();
+    startMission(w, 1); // Night Courier in progress
+    w.player.money = 700; w.player.respect = 10;
+    putPlayerInCar(w, 960, 600, 0.1, 'sedan', '#3f6fb5'); // on the road below the bank
+    p.car.speed = 210;
+    w.setHeat(78);
+    w.spawnPolice(4);
+    w.heli.active = true;
+    w.heli.x = p.x; w.heli.y = p.y - 90;
+    w.time = 17.4;
+  } else if (name === 'chase') {
+    // Police ramming the player's taxi on the beach road.
+    w.startGame();
+    putPlayerInCar(w, 1500, 1800, 0.05, 'taxi', '#e8c832');
+    p.car.speed = 260;
+    w.setHeat(55);
+    const cop1 = w.addCar({ x: 1440, y: 1800, angle: 0.05, model: 'police', color: '#20242c', police: true, health: 260 });
+    cop1.speed = 300;
+    const cop2 = w.addCar({ x: 1380, y: 1796, angle: 0.1, model: 'police', color: '#20242c', police: true, health: 260 });
+    cop2.speed = 290;
+    w.time = 11.0;
+  } else if (name === 'mission') {
+    // Courier run: package collected, delivering to Hotel Miramar.
+    w.startGame();
+    startMission(w, 1);
+    w.missionPhase = 1; // package already collected
+    w.player.money = 1200; w.player.respect = 18;
+    putPlayerInCar(w, 1700, 360, -0.4, 'sedan', '#7a4a8f'); // on the road by the hotel, still en route
+    p.car.speed = 180;
+    w.setHeat(12);
+    w.spawnPolice(1);
+    w.time = 12.5;
+  } else if (name === 'city') {
+    // Title screen over the city at dusk.
+    w.state = 'title';
+    p.x = 1280; p.y = 1000; p.angle = -Math.PI / 2;
+    w.time = 18.2;
+  }
+  // Let the world settle for a few steps so cars/peds are placed.
+  const idle = { down: new Set(), pressed: new Set() };
+  if (w.state === 'playing') {
+    for (let i = 0; i < 12; i++) w.update(1 / 60, idle);
   }
 }
 
-// Stage one named scene. The world must already be in 'play' (except
-// 'city', which keeps the title screen). Deterministic for a seeded world.
-export function stageShot(w, name) {
-  const auto = createAutopilot(w);
-  if (name === 'cover') {
-    // 4-star chase at Banco Verde, mission 1 already done.
-    startMission(w, 1);
-    w.player.money = 650;
-    w.player.respect = 10;
-    w.time = 0.32;
-    putPlayerInCar(w, 1280, 800, 0, '#e8b13c');
-    setHeat(w, 75);
-    spawnPolice(w, 3);
-    w.police[0].x = 1080; w.police[0].y = 800;
-    w.police[1].x = 1120; w.police[1].y = 880;
-    w.police[2].x = 1000; w.police[2].y = 760;
-    auto.setTarget(2080, 800);
-    fastForward(w, auto, 5);
-  } else if (name === 'chase') {
-    // Police ramming the player's taxi on the beach road.
-    startMission(w, 1);
-    w.time = 0.3;
-    putPlayerInCar(w, 2080, 420, Math.PI / 2, '#d8b400');
-    setHeat(w, 55);
-    spawnPolice(w, 2);
-    w.police[0].x = 2080; w.police[0].y = 320;
-    w.police[1].x = 2044; w.police[1].y = 350;
-    auto.setTarget(2080, 1250);
-    fastForward(w, auto, 4);
-  } else if (name === 'mission') {
-    // Courier run, package picked up, driving to the safehouse.
-    startMission(w, 1);
-    w.missionState.phase = 1;
-    w.time = 0.28;
-    putPlayerInCar(w, 1280, 800, Math.PI, '#2e6fb0');
-    auto.setTarget(CFG.SAFEHOUSE.doorX, CFG.SAFEHOUSE.doorY);
-    fastForward(w, auto, 4);
-  } else if (name === 'city') {
-    // Title over the city at dusk. The title screen is drawn by main.js.
-    w.time = 0.5;
-    w.player.x = 1120;
-    w.player.y = 800;
-    w.state = 'title';
+export function createAutopilot() {
+  const ap = {
+    route: null, routeIdx: 0, goalKey: '',
+    lastX: 0, lastY: 0, lastT: 0, reverseT: 0, sideT: 0, sideDir: 1,
+    eT: 0, footStuckT: 0,
+    step(w, input, dt) {
+      const p = w.player;
+      if (w.state !== 'playing') return;
+      ap.eT = Math.max(0, ap.eT - dt);
+      // The autopilot owns the driving keys while it runs.
+      for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'KeyE']) input.down.delete(k);
+
+      // ---- choose a goal ----
+      let goal = null;
+      let goalKind = 'objective';
+      const obj = w.objective();
+      const mIdx = w.missionIdx;
+      if (mIdx === 7) {
+        // King of Verde Bay: keep moving — pick a fresh road point.
+        if (!ap.route || ap.routeIdx >= ap.route.length) {
+          const pt = w.city.randomRoadPoint(w.rng);
+          goal = { x: pt.x, y: pt.y };
+          goalKind = 'roam';
+        }
+      } else if (!p.car) {
+        if (mIdx === 4) {
+          // Hot Wheels: go straight for the sports car.
+          const s = w.missionData.sports;
+          if (s && !s.wrecked) { goal = { x: s.x, y: s.y }; goalKind = 'car'; }
+        }
+        if (!goal) {
+          // Far objective? Steal a car first.
+          const far = obj && dist(p.x, p.y, obj.x, obj.y) > 380;
+          if (far) {
+            let best = null, bd = 520;
+            for (const c of w.cars) {
+              if (c.wrecked || c.police || c.convoy || c.traffic) continue;
+              const d = dist(p.x, p.y, c.x, c.y);
+              if (d < bd) { bd = d; best = c; }
+            }
+            if (best) { goal = { x: best.x, y: best.y }; goalKind = 'car'; }
+          }
+        }
+        if (!goal && obj) { goal = { x: obj.x, y: obj.y }; goalKind = 'objective'; }
+      } else {
+        // In a car: mission 5 without the sports car means go get it.
+        if (mIdx === 4 && p.car !== w.missionData.sports) {
+          goal = { x: CFG.places.dealer.at[0], y: CFG.places.dealer.at[1] };
+          goalKind = 'dealer';
+        } else if (obj) {
+          goal = { x: obj.x, y: obj.y };
+          goalKind = 'objective';
+        }
+      }
+      if (!goal) return;
+
+      // ---- E presses (throttled, mission-aware) ----
+      const nearGoal = dist(p.x, p.y, goal.x, goal.y);
+      if (!p.car) {
+        // Hold E to crack the case (mission 6, phase 0) — only when
+        // actually standing at the jewels. The old code tested nearGoal
+        // (distance to the current goal), so standing next to a car to
+        // steal held E down forever instead of pressing it to get in:
+        // `down` never fires the world's `pressed` check, and the
+        // arrive-radius return meant no movement keys either — the
+        // player froze beside the car for the rest of the run.
+        const atJewels = mIdx === 5 && w.missionPhase === 0 &&
+          dist(p.x, p.y, CFG.places.jewels.at[0], CFG.places.jewels.at[1]) < CFG.places.jewels.r;
+        if (atJewels) {
+          input.down.add('KeyE');
+        } else if (ap.eT <= 0 && nearGoal < 64) {
+          // Walk right up to the sports car before pressing E (mission 5):
+          // pressing from too far away re-enters the car just left.
+          if (mIdx === 4 && nearGoal > 48) {
+            // too far — keep walking, do not press yet
+          } else {
+            input.pressed.add('KeyE');
+            ap.eT = 0.45;
+          }
+        }
+      } else {
+        // Exit near the sports car (mission 5) or the jewels (mission 6),
+        // or press E where the mission needs it (courier pickup, convoy
+        // cash grab). The world tries the mission's interact first, so
+        // pressing E here is safe: if the mission does not need it, the
+        // player simply steps out of the car.
+        const near = dist(p.x, p.y, goal.x, goal.y);
+        const wantPress =
+          (mIdx === 1 && w.missionPhase === 0 && near < 80) ||
+          (mIdx === 4 && goalKind === 'dealer' && near < 90) ||
+          (mIdx === 5 && w.missionPhase === 0 && near < CFG.places.jewels.r + 20) ||
+          (mIdx === 6 && w.missionPhase === 0 && near < 80);
+        if (wantPress && ap.eT <= 0) {
+          input.pressed.add('KeyE');
+          ap.eT = 0.45;
+        }
+      }
+
+      // ---- follow the route ----
+      const key = goalKind + ':' + Math.round(goal.x / 40) + ',' + Math.round(goal.y / 40);
+      if (key !== ap.goalKey || !ap.route || ap.routeIdx >= ap.route.length) {
+        ap.goalKey = key;
+        ap.route = w.city.route(p.x, p.y, goal.x, goal.y);
+        ap.routeIdx = 0;
+      }
+      if (!ap.route || ap.routeIdx >= ap.route.length) {
+        // Final approach: head straight at the goal.
+        steerToward(w, input, dt, goal.x, goal.y, p.car ? 160 : 120);
+        return;
+      }
+      const wp = ap.route[ap.routeIdx];
+      if (dist(p.x, p.y, wp.x, wp.y) < (p.car ? 42 : 26)) {
+        ap.routeIdx++;
+        return;
+      }
+      if (p.car) driveToward(ap, w, input, dt, wp.x, wp.y);
+      else walkToward(ap, w, input, dt, wp.x, wp.y);
+    },
+  };
+  return ap;
+}
+
+function steerToward(w, input, dt, tx, ty, speed) {
+  const p = w.player;
+  const want = Math.atan2(ty - p.y, tx - p.x);
+  const diff = angDiff(p.angle, want);
+  if (p.car) {
+    const steer = clamp(diff * 2.2, -1, 1);
+    if (steer < -0.15) input.down.add('KeyA');
+    if (steer > 0.15) input.down.add('KeyD');
+    if (Math.abs(diff) < 1.9) input.down.add('KeyW');
+  } else {
+    const dx = Math.cos(want), dy = Math.sin(want);
+    if (dy < -0.3) input.down.add('KeyW');
+    if (dy > 0.3) input.down.add('KeyS');
+    if (dx < -0.3) input.down.add('KeyA');
+    if (dx > 0.3) input.down.add('KeyD');
+    if (Math.abs(dx) + Math.abs(dy) > 0.5) input.down.add('ShiftLeft');
   }
-  w.shotStaged = name;
+}
+
+function driveToward(ap, w, input, dt, tx, ty) {
+  const p = w.player;
+  const car = p.car;
+  const want = Math.atan2(ty - p.y, tx - p.x);
+  const diff = angDiff(car.angle, want);
+  const d = dist(p.x, p.y, tx, ty);
+
+  // Stuck detection: barely moving while trying to drive.
+  ap.lastT += dt;
+  if (ap.lastT > 0.6) {
+    const moved = dist(p.x, p.y, ap.lastX, ap.lastY);
+    if (moved < 9 && Math.abs(car.speed) < 30) {
+      ap.reverseT = 1.2;
+      ap.route = null; // re-route from here after reversing
+    }
+    ap.lastX = p.x; ap.lastY = p.y; ap.lastT = 0;
+  }
+  if (ap.reverseT > 0) {
+    ap.reverseT -= dt;
+    input.down.add('KeyS');
+    input.down.add(Math.sign(diff) >= 0 ? 'KeyA' : 'KeyD');
+    return;
+  }
+
+  const steer = clamp(diff * 2.2, -1, 1);
+  if (steer < -0.15) input.down.add('KeyA');
+  if (steer > 0.15) input.down.add('KeyD');
+  // Brake for sharp turns, for the final approach, and for cars ahead.
+  const carAhead = (() => {
+    const ax = p.x + Math.cos(car.angle) * 64, ay = p.y + Math.sin(car.angle) * 64;
+    for (const c of w.cars) {
+      if (c === car || c.wrecked) continue;
+      if (dist(ax, ay, c.x, c.y) < 36) return true;
+    }
+    return false;
+  })();
+  const needBrake = (Math.abs(diff) > 0.7 && Math.abs(car.speed) > 110) ||
+    (d < 150 && Math.abs(car.speed) > 120) || carAhead;
+  if (needBrake) {
+    if (Math.abs(car.speed) > 60) input.down.add('Space');
+  } else {
+    input.down.add('KeyW');
+  }
+}
+
+function walkToward(ap, w, input, dt, tx, ty) {
+  const p = w.player;
+  // Stuck on foot: sidestep for a while, then resume.
+  ap.lastT += dt;
+  if (ap.lastT > 0.8) {
+    const moved = dist(p.x, p.y, ap.lastX, ap.lastY);
+    if (moved < 6) {
+      ap.sideT = 0.9;
+      ap.sideDir = -ap.sideDir;
+    }
+    ap.lastX = p.x; ap.lastY = p.y; ap.lastT = 0;
+  }
+  const want = Math.atan2(ty - p.y, tx - p.x);
+  let a = want;
+  if (ap.sideT > 0) {
+    ap.sideT -= dt;
+    a = want + (Math.PI / 2) * ap.sideDir;
+  }
+  const dx = Math.cos(a), dy = Math.sin(a);
+  if (dy < -0.3) input.down.add('KeyW');
+  if (dy > 0.3) input.down.add('KeyS');
+  if (dx < -0.3) input.down.add('KeyA');
+  if (dx > 0.3) input.down.add('KeyD');
+  if (dist(p.x, p.y, tx, ty) > 320) input.down.add('ShiftLeft');
 }

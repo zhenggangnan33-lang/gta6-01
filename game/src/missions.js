@@ -1,247 +1,265 @@
-// VERDE BAY story missions — 8 jobs for Rico Solano, wheelman for
-// Marisol "La Reina" Duarte. Each mission: setup(w), update(w, dt) -> true
-// when done, objective(w) -> {x, y, label} for the HUD marker.
-// Missions only touch the world object they are handed; they never import it.
-import { CFG } from './config.js';
+// The eight story missions of VERDE BAY. Dante Vega, wheelman for
+// Carmen "La Rosa" Ibarra, works his way from stealing a first car to
+// becoming King of Verde Bay. Each mission is a small state machine:
+// setup(w) runs once when the mission starts, update(w, dt) returns true
+// when it is done, interact(w) handles the E key, and objective(w) gives
+// the HUD arrow its target. The world object carries the scratch state
+// (w.missionPhase, w.missionData).
 
-function near(w, x, y, r) {
-  const dx = w.player.x - x;
-  const dy = w.player.y - y;
-  return dx * dx + dy * dy < r * r;
-}
+import { CFG, MISSION_REWARDS } from './config.js';
 
-function inRect(w, r) {
-  return w.player.x > r.x && w.player.x < r.x + r.w && w.player.y > r.y && w.player.y < r.y + r.h;
-}
+const P = CFG.places;
+
+function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 
 export const MISSIONS = [
   {
-    name: 'First Wheels',
-    brief: 'Steal any car and bring it to Solano Garage.',
-    reward: 500,
-    respect: 10,
-    setup(w) { w.missionState = { phase: 0 }; },
-    objective(w) { return { x: CFG.GARAGE.cx, y: CFG.GARAGE.cy, label: 'Solano Garage' }; },
+    id: 'first-ride', name: 'First Ride',
+    brief: 'Steal any car and bring it to Vega Motors.',
+    setup(w) { w.missionPhase = 0; w.flash('Steal a car — any car — and bring it to Vega Motors.'); },
     update(w) {
-      // Mission update runs before the chop shop in the world step, so the
-      // delivered car counts for the job instead of being sold first.
-      return !!w.player.car && inRect(w, CFG.GARAGE);
+      const p = w.player;
+      if (p.car && dist(p.x, p.y, P.garage.at[0], P.garage.at[1]) < P.garage.r) return true;
+      return false;
     },
+    interact() { return false; },
+    objective() { return { x: P.garage.at[0], y: P.garage.at[1], label: 'Vega Motors' }; },
   },
   {
-    name: 'Courier Run',
-    brief: 'Pick up the package at Banco Verde, deliver it to the safehouse.',
-    reward: 650,
-    respect: 10,
-    setup(w) { w.missionState = { phase: 0 }; },
-    objective(w) {
-      const s = w.missionState;
-      return s.phase === 0
-        ? { x: CFG.BANK.doorX, y: CFG.BANK.doorY, label: 'Banco Verde — pick up' }
-        : { x: CFG.SAFEHOUSE.doorX, y: CFG.SAFEHOUSE.doorY, label: 'Safehouse — deliver' };
-    },
+    id: 'night-courier', name: 'Night Courier',
+    brief: 'Pick up the package at Café Luna, deliver it to Hotel Miramar.',
+    setup(w) { w.missionPhase = 0; w.flash('Pick up the package at Café Luna.'); },
     update(w) {
-      const s = w.missionState;
-      if (s.phase === 0) {
-        if (near(w, CFG.BANK.doorX, CFG.BANK.doorY, CFG.MARKER_R) && w.consumeAction()) {
-          s.phase = 1;
-          w.flash('Package picked up — lose the tail and run it to the safehouse.');
-        }
-        return false;
-      }
-      return near(w, CFG.SAFEHOUSE.doorX, CFG.SAFEHOUSE.doorY, CFG.MARKER_R);
+      const p = w.player;
+      if (w.missionPhase === 1 && dist(p.x, p.y, P.hotel.at[0], P.hotel.at[1]) < P.hotel.r) return true;
+      return false;
     },
-  },
-  {
-    name: 'Getaway Driver',
-    brief: 'Pick up Marisol at the hotel, then drive her to the marina — hot.',
-    reward: 900,
-    respect: 15,
-    setup(w) { w.missionState = { phase: 0 }; },
-    objective(w) {
-      const s = w.missionState;
-      return s.phase === 0
-        ? { x: CFG.HOTEL.doorX, y: CFG.HOTEL.doorY, label: 'Hotel — pick up Marisol' }
-        : { x: CFG.MARINA.yachtX, y: CFG.MARINA.yachtY, label: 'Marina — drop her off' };
-    },
-    update(w) {
-      const s = w.missionState;
-      if (s.phase === 0) {
-        if (near(w, CFG.HOTEL.doorX, CFG.HOTEL.doorY, CFG.MARKER_R)) {
-          s.phase = 1;
-          w.setHeat(32);
-          w.spawnPolice(2);
-          w.flash('Marisol is in — the cops are already on you. Drive!');
-        }
-        return false;
-      }
-      if (near(w, CFG.MARINA.yachtX, CFG.MARINA.yachtY, CFG.MARKER_R)) {
-        w.setHeat(10);
+    interact(w) {
+      const p = w.player;
+      if (w.missionPhase === 0 && dist(p.x, p.y, P.cafe.at[0], P.cafe.at[1]) < P.cafe.r) {
+        w.missionPhase = 1;
+        w.flash('Package collected. Deliver it to Hotel Miramar — no questions.');
         return true;
       }
       return false;
     },
+    objective(w) {
+      return w.missionPhase === 0
+        ? { x: P.cafe.at[0], y: P.cafe.at[1], label: 'Café Luna' }
+        : { x: P.hotel.at[0], y: P.hotel.at[1], label: 'Hotel Miramar' };
+    },
   },
   {
-    name: 'The Collection',
-    brief: 'Collect the three cash drops: the mart, the park, the pier.',
-    reward: 1200,
-    respect: 15,
+    id: 'hot-pursuit', name: 'Hot Pursuit',
+    brief: 'The cops are onto you. Reach La Rosa House — do not get caught.',
     setup(w) {
-      w.missionState = {
-        phase: 0,
-        drops: [
-          { x: CFG.MART.doorX, y: CFG.MART.doorY, got: false, label: 'Mart drop' },
-          { x: CFG.PARK.x + CFG.PARK.w / 2, y: CFG.PARK.y + CFG.PARK.h / 2, got: false, label: 'Park drop' },
-          { x: CFG.PIER.x + 20, y: CFG.PIER.y + CFG.PIER.h / 2, got: false, label: 'Pier drop' },
-        ],
-      };
-    },
-    objective(w) {
-      const d = w.missionState.drops.find((d) => !d.got);
-      return d ? { x: d.x, y: d.y, label: d.label } : { x: CFG.MART.doorX, y: CFG.MART.doorY, label: 'Collection done' };
+      w.missionPhase = 0;
+      w.setHeat(35);
+      w.spawnPolice(2);
+      w.flash('Two stars! Lose them at La Rosa House.');
     },
     update(w) {
-      const s = w.missionState;
-      for (const d of s.drops) {
-        if (!d.got && near(w, d.x, d.y, CFG.MARKER_R) && w.consumeAction()) {
-          d.got = true;
-          w.flash(`Cash collected (${s.drops.filter((x) => x.got).length}/3).`);
+      const p = w.player;
+      if (dist(p.x, p.y, P.safehouse.at[0], P.safehouse.at[1]) < P.safehouse.r) return true;
+      return false;
+    },
+    interact() { return false; },
+    objective() { return { x: P.safehouse.at[0], y: P.safehouse.at[1], label: 'La Rosa House' }; },
+  },
+  {
+    id: 'vault-job', name: 'The Vault Job',
+    brief: 'Grab the three cash bags — bank, plaza, docks — then return to the garage.',
+    setup(w) {
+      w.missionPhase = 0;
+      w.missionData.bags = [
+        { x: P.bank.at[0], y: P.bank.at[1], label: 'Meridian Bank', taken: false },
+        { x: P.plaza.at[0], y: P.plaza.at[1], label: 'Palma Plaza', taken: false },
+        { x: P.docks.at[0], y: P.docks.at[1], label: 'The Docks', taken: false },
+      ];
+      w.flash('Three bags. Bank, plaza, docks. Then back to the garage.');
+    },
+    update(w) {
+      const p = w.player;
+      for (const bag of w.missionData.bags) {
+        if (!bag.taken && dist(p.x, p.y, bag.x, bag.y) < 60) {
+          bag.taken = true;
+          w.flash('Bag grabbed — ' + w.missionData.bags.filter((b) => b.taken).length + ' of 3.');
+          w.addHeat(8);
         }
       }
-      return s.drops.every((d) => d.got);
+      const got = w.missionData.bags.filter((b) => b.taken).length;
+      if (got === 3 && dist(p.x, p.y, P.garage.at[0], P.garage.at[1]) < P.garage.r) return true;
+      return false;
+    },
+    interact() { return false; },
+    objective(w) {
+      const next = w.missionData.bags.find((b) => !b.taken);
+      if (next) return { x: next.x, y: next.y, label: next.label };
+      return { x: P.garage.at[0], y: P.garage.at[1], label: 'Vega Motors' };
     },
   },
   {
-    name: 'Turbo Heist',
-    brief: 'Steal the sports car from the dealership lot. Bring it to the garage.',
-    reward: 2000,
-    respect: 20,
+    id: 'hot-wheels', name: 'Hot Wheels',
+    brief: 'Steal the Cometa GT from the dealership and bring it to Vega Motors.',
     setup(w) {
-      w.missionState = { phase: 0, sport: null };
-      const sport = w.addCar({
-        kind: 'sport', x: CFG.DEALERSHIP.sportX, y: CFG.DEALERSHIP.sportY,
-        angle: 0, parked: true, color: '#d8b400', top: 390,
+      w.missionPhase = 0;
+      // The sports car waits in the dealership lot (reuse it if a respawn
+      // re-ran this setup — never spawn a second one).
+      const existing = w.cars.find((c) => c.sports && !c.wrecked);
+      const car = existing || w.addCar({
+        x: P.dealer.at[0] + 30, y: P.dealer.at[1] + 20, angle: 0.4,
+        model: 'sports', color: '#c22e2e', parked: true, sports: true,
       });
-      w.missionState.sport = sport;
-    },
-    objective(w) {
-      const s = w.missionState;
-      return s.phase === 0
-        ? { x: CFG.DEALERSHIP.sportX, y: CFG.DEALERSHIP.sportY, label: 'Dealership — the sports car' }
-        : { x: CFG.GARAGE.cx, y: CFG.GARAGE.cy, label: 'Solano Garage' };
+      w.missionData.sports = car;
+      w.flash('The Cometa GT is at the dealership. Take it — quietly.');
     },
     update(w) {
-      const s = w.missionState;
-      if (s.phase === 0) {
-        if (w.player.car === s.sport) {
-          s.phase = 1;
-          w.flash('That is a fast car. Get it to the garage, in one piece.');
-        }
-        return false;
-      }
-      return w.player.car === s.sport && inRect(w, CFG.GARAGE);
+      const p = w.player;
+      if (p.car === w.missionData.sports &&
+        dist(p.x, p.y, P.garage.at[0], P.garage.at[1]) < P.garage.r) return true;
+      return false;
     },
-  },
-  {
-    name: 'Smash & Grab',
-    brief: 'Smash the jewelry store window (F to punch), grab the loot, run to the safehouse.',
-    reward: 2500,
-    respect: 20,
-    setup(w) { w.missionState = { phase: 0 }; },
-    objective(w) {
-      const s = w.missionState;
-      return s.phase === 0
-        ? { x: CFG.JEWELRY.doorX, y: CFG.JEWELRY.doorY, label: 'Jewelry store — smash the window' }
-        : { x: CFG.SAFEHOUSE.doorX, y: CFG.SAFEHOUSE.doorY, label: 'Safehouse — stash the loot' };
-    },
-    update(w) {
-      const s = w.missionState;
-      if (s.phase === 0) {
-        if (near(w, CFG.JEWELRY.doorX, CFG.JEWELRY.doorY, CFG.MARKER_R) && w.player.punched) {
-          s.phase = 1;
-          w.addHeat(CFG.HEAT_ALARM);
-          w.spawnPolice(2);
-          w.flash('Alarm! Grabbed the loot — run for the safehouse.');
-        }
-        return false;
-      }
-      return near(w, CFG.SAFEHOUSE.doorX, CFG.SAFEHOUSE.doorY, CFG.MARKER_R);
-    },
-  },
-  {
-    name: 'The Convoy',
-    brief: 'Ram the armored van until it stops, then grab the cash on foot.',
-    reward: 4000,
-    respect: 25,
-    setup(w) {
-      w.missionState = { phase: 0, van: null };
-      const van = w.addCar({
-        kind: 'van', x: 160, y: 160, angle: 0, parked: false, color: '#3a3f45',
-        health: 120, top: 260, convoy: true,
-      });
-      van.route = w.cityRoute({ x: 160, y: 160 }, { x: 2080, y: 1440 });
-      van.routeIdx = 0;
-      w.missionState.van = van;
-    },
-    objective(w) {
-      const s = w.missionState;
-      const v = s.van;
-      return s.phase === 0
-        ? { x: v.x, y: v.y, label: 'Armored van — ram it to a stop' }
-        : { x: v.x, y: v.y, label: 'The van — grab the cash' };
-    },
-    update(w) {
-      const s = w.missionState;
-      const v = s.van;
-      if (s.phase === 0) {
-        if (v.wrecked) {
-          s.phase = 1;
-          w.flash('The van is stopped. Get out and grab the cash.');
-        }
-        return false;
-      }
-      if (!w.player.car && near(w, v.x, v.y, CFG.MARKER_R) && w.consumeAction()) {
-        w.addHeat(25);
+    interact(w) {
+      // Near the sports car on foot: E enters that car, not the nearest.
+      // Generous radius: the player steps out of their old car right next
+      // to it, and the press must reach the sports car, not re-enter the
+      // car they just left.
+      const p = w.player;
+      const s = w.missionData.sports;
+      if (!p.car && s && !s.wrecked && dist(p.x, p.y, s.x, s.y) < 110) {
+        w._enterCar = s;
         return true;
       }
       return false;
     },
+    objective(w) {
+      // Before the steal: the dealership. Once Rico is in the Cometa GT,
+      // the objective is the garage — the old version always pointed at
+      // the dealership, so the autopilot drove the stolen car in circles
+      // around the lot forever and the mission could never complete.
+      const p = w.player;
+      if (p.car === w.missionData.sports) {
+        return { x: P.garage.at[0], y: P.garage.at[1], label: 'Vega Motors — deliver the Cometa GT' };
+      }
+      return { x: P.dealer.at[0], y: P.dealer.at[1], label: 'Cometa Motors' };
+    },
   },
   {
-    name: 'King of Verde Bay',
-    brief: 'Survive 60 seconds at 5 stars, then reach the yacht at the marina.',
-    reward: 10000,
-    respect: 50,
+    id: 'smash-grab', name: 'Smash and Grab',
+    brief: 'Crack the case at Casa Diamante (hold E), then get the jewels to the garage.',
     setup(w) {
-      w.missionState = { phase: 0, timer: 60 };
-      w.setHeat(95);
-      w.spawnPolice(4);
-    },
-    objective(w) {
-      const s = w.missionState;
-      return s.phase === 0
-        ? { x: w.player.x, y: w.player.y, label: `Survive at 5 stars — ${Math.ceil(s.timer)}s` }
-        : { x: CFG.MARINA.yachtX, y: CFG.MARINA.yachtY, label: 'The yacht — you are king' };
+      w.missionPhase = 0; w.missionData.crack = 0;
+      w.flash('Casa Diamante. Hold E by the door to crack the case.');
     },
     update(w, dt) {
-      const s = w.missionState;
-      if (s.phase === 0) {
-        // A bust resets heat and clears the police, which would freeze
-        // the survive timer forever (it only ticks at 5 stars). If the
-        // heat is gone, bring the chase back.
-        if (w.stars < 5) {
-          w.setHeat(95);
-          if (w.police.length < 2) w.spawnPolice(2);
+      const p = w.player;
+      const near = dist(p.x, p.y, P.jewels.at[0], P.jewels.at[1]) < P.jewels.r;
+      if (w.missionPhase === 0 && near && w.keysDown.has('KeyE')) {
+        w.missionData.crack += dt;
+        if (w.missionData.crack >= 3) {
+          w.missionPhase = 1;
+          w.setHeat(55);
+          w.spawnPolice(2);
+          w.flash('Jewels grabbed! The alarm is screaming — run to the garage!');
         }
-        if (w.stars >= 5) s.timer -= dt;
-        if (s.timer <= 0) {
-          s.phase = 1;
-          w.flash('Sixty seconds. Now get to the yacht!');
-        }
-        return false;
       }
-      return near(w, CFG.MARINA.yachtX, CFG.MARINA.yachtY, CFG.MARKER_R);
+      if (w.missionPhase === 1 && dist(p.x, p.y, P.garage.at[0], P.garage.at[1]) < P.garage.r) return true;
+      return false;
+    },
+    interact() { return false; },
+    objective(w) {
+      return w.missionPhase === 0
+        ? { x: P.jewels.at[0], y: P.jewels.at[1], label: 'Casa Diamante' }
+        : { x: P.garage.at[0], y: P.garage.at[1], label: 'Vega Motors' };
+    },
+  },
+  {
+    id: 'convoy', name: 'The Convoy',
+    brief: 'Intercept the armored truck, grab the cash (E), escape to La Rosa House.',
+    setup(w) {
+      w.missionPhase = 0;
+      // An armored truck loops the outer ring road (reuse it on respawn).
+      const existing = w.cars.find((c) => c.convoy && !c.wrecked);
+      const truck = existing || w.addCar({
+        x: 160, y: 120, angle: 0, model: 'truck', color: '#3a5a7a',
+        parked: false, convoy: true, health: 600,
+      });
+      if (!existing) {
+        truck.route = w.city.route(160, 120, 2400, 1800);
+        truck.routeIdx = 0;
+      }
+      w.missionData.truck = truck;
+      w.flash('An armored truck is running the ring road. Hit it and grab the cash.');
+    },
+    update(w) {
+      const p = w.player;
+      if (w.missionPhase === 1 && dist(p.x, p.y, P.safehouse.at[0], P.safehouse.at[1]) < P.safehouse.r) return true;
+      return false;
+    },
+    interact(w) {
+      const p = w.player;
+      const t = w.missionData.truck;
+      if (w.missionPhase === 0 && t && !t.wrecked && dist(p.x, p.y, t.x, t.y) < 80) {
+        w.missionPhase = 1;
+        w.setHeat(70);
+        w.spawnPolice(3);
+        w.flash('Cash grabbed! Get to La Rosa House — now!');
+        return true;
+      }
+      return false;
+    },
+    objective(w) {
+      const t = w.missionData.truck;
+      if (w.missionPhase === 0 && t) return { x: t.x, y: t.y, label: 'Armored truck' };
+      return { x: P.safehouse.at[0], y: P.safehouse.at[1], label: 'La Rosa House' };
+    },
+  },
+  {
+    id: 'king', name: 'King of Verde Bay',
+    brief: 'Survive 60 seconds at five stars, then reach the yacht at the marina.',
+    setup(w) {
+      w.missionPhase = 0; w.missionData.timer = 0;
+      w.setHeat(95);
+      w.spawnPolice(4);
+      w.flash('Five stars! Survive 60 seconds — then the yacht.');
+    },
+    update(w, dt) {
+      const p = w.player;
+      if (w.missionPhase === 0) {
+        // If the heat ever drops, the heat is back on.
+        if (w.stars < 5) { w.setHeat(95); w.spawnPolice(2); }
+        if (w.stars >= 5) w.missionData.timer += dt;
+        if (w.missionData.timer >= 60) {
+          w.missionPhase = 1;
+          w.flash('You made it. The yacht is waiting at the marina.');
+        }
+      } else if (dist(p.x, p.y, P.yacht.at[0], P.yacht.at[1]) < P.yacht.r) {
+        return true;
+      }
+      return false;
+    },
+    interact() { return false; },
+    objective(w) {
+      return w.missionPhase === 0
+        ? { x: w.player.x, y: w.player.y, label: 'Survive — ' + Math.max(0, Math.ceil(60 - w.missionData.timer)) + 's' }
+        : { x: P.yacht.at[0], y: P.yacht.at[1], label: 'Yacht La Rosa' };
     },
   },
 ];
+
+export function missionReward(idx) {
+  return MISSION_REWARDS[idx] || [0, 0];
+}
+
+export function startMission(w, idx) {
+  w.missionIdx = idx;
+  w.missionPhase = 0;
+  w.missionData = {};
+  MISSIONS[idx].setup(w);
+}
+
+export function updateMission(w, dt) {
+  const m = MISSIONS[w.missionIdx];
+  if (!m) return false;
+  return m.update(w, dt) === true;
+}

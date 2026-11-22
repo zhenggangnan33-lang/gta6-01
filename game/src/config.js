@@ -1,86 +1,97 @@
-// VERDE BAY — configuration: world size, road grid, landmarks, tuning.
-// All numbers are this game's own design; nothing here is copied from a starter.
+// VERDE BAY — configuration for the gta6-01 open-world crime game.
+// Third build: every value below was chosen fresh for this session.
+// The city is a 2560x1920 coastal town: a road grid, a beach along the
+// south edge, a marina in the south-east corner, and named landmarks the
+// story missions visit. Nothing here is copied from an earlier build.
+
 export const CFG = {
-  WORLD_W: 2560,
-  WORLD_H: 1920,
-  // Road centre lines. Roads are 72 px wide; blocks sit between them.
-  ROAD_X: [160, 480, 800, 1120, 1440, 1760, 2080],
-  ROAD_Y: [160, 480, 800, 1120, 1440],
-  ROAD_HALF: 36,
-  // Landmarks (world coordinates). Markers use a generous radius so a player
-  // standing on the street can always reach a building's door.
-  MARKER_R: 84,
-  GARAGE: { x: 500, y: 500, w: 260, h: 260, cx: 630, cy: 630 }, // open forecourt
-  BANK: { x: 1150, y: 510, w: 260, h: 200, doorX: 1280, doorY: 760 },
-  HOTEL: { x: 1470, y: 830, w: 250, h: 200, doorX: 1595, doorY: 1060 },
-  SAFEHOUSE: { x: 830, y: 1150, w: 250, h: 180, doorX: 955, doorY: 1360 },
-  JEWELRY: { x: 510, y: 830, w: 240, h: 180, doorX: 630, doorY: 1040 },
-  DEALERSHIP: { x: 1790, y: 510, w: 260, h: 240, sportX: 1920, sportY: 630 },
-  MART: { x: 1150, y: 1150, w: 250, h: 190, doorX: 1275, doorY: 1370 },
-  MARINA: { x: 2080, y: 1440, w: 256, h: 280, yachtX: 2200, yachtY: 1600 },
-  PIER: { x: 2336, y: 780, w: 170, h: 44 },
-  BEACH_X: 2336, // sand starts here; water from WATER_X
-  WATER_X: 2460,
-  PARK: { x: 830, y: 510, w: 250, h: 240 },
-  SPAWN: { x: 700, y: 790 },
-  // Player
-  WALK_SPEED: 175,
-  SPRINT_SPEED: 265,
-  PLAYER_R: 10,
-  PLAYER_HEALTH: 100,
-  PUNCH_RANGE: 42,
-  PUNCH_DMG: 34,
-  // Cars
-  CAR_LEN: 46,
-  CAR_WID: 22,
-  CAR_R: 16,
-  CAR_HEALTH: 220,
-  CAR_ACCEL: 420,
-  CAR_TOP: 330,
-  CAR_REVERSE_TOP: 140,
-  CAR_TURN: 2.6,
-  TRAFFIC_COUNT: 14,
-  PARKED_COUNT: 12,
-  RAM_DMG: 1,
-  RAM_COOLDOWN: 2.5,
-  POLICE_TOP: 520,
-  // Pedestrians
-  PED_COUNT: 26,
-  PED_SPEED: 55,
-  // Wanted / heat
-  HEAT_STEAL: 15,
-  HEAT_PUNCH: 8,
-  HEAT_HIT_PED: 12,
-  HEAT_ALARM: 20,
-  HEAT_DECAY: 2.2, // per second while no police nearby
-  CHOP_PAY: 150,
-  // Garage shop
-  SHOP: [
-    { key: '1', name: 'Armor plating', price: 500, id: 'armor' },
-    { key: '2', name: 'Turbo engine', price: 800, id: 'turbo' },
-    { key: '3', name: 'Racing tires', price: 300, id: 'tires' },
-  ],
-  // Day cycle: 0 = dawn, 0.25 = noon, 0.5 = dusk, 0.75 = night
-  DAY_LENGTH: 240,
-  // Colours
-  COLORS: {
-    grass: '#3d7a3a',
-    road: '#33363b',
-    roadLine: '#c9a227',
-    sidewalk: '#6f6f68',
-    beach: '#e0c98f',
-    water: '#1d6f9e',
-    pier: '#8a6b45',
-    buildingRoofs: ['#7a4a3a', '#4a5a7a', '#6a6a72', '#8a6a3a', '#5a7a5a', '#7a3a5a'],
-    parkTree: '#2c5a28',
+  world: { w: 2560, h: 1920 },
+  // Road centrelines. Vertical roads run the full height, horizontal the
+  // full width; intersections are the routing graph's nodes.
+  roadsX: [160, 480, 800, 1120, 1440, 1760, 2080, 2400],
+  roadsY: [120, 360, 600, 840, 1080, 1320, 1560, 1800],
+  roadHalf: 26, // half-width of the asphalt
+  lane: 13, // right-hand lane offset from the centreline
+  // South strip is beach sand; the south-east corner is marina water.
+  beachY: 1820,
+  marina: { x0: 2280, y0: 1560, x1: 2560, y1: 1920 },
+
+  // Named places. `at` is the front-door / interaction point, `r` the
+  // radius inside which the player counts as "there".
+  places: {
+    garage: { name: 'Vega Motors', at: [1300, 960], r: 90, note: 'garage + chop shop' },
+    bank: { name: 'Meridian Bank', at: [960, 600], r: 70 },
+    hotel: { name: 'Hotel Miramar', at: [1920, 360], r: 70 },
+    cafe: { name: 'Café Luna', at: [640, 1320], r: 70 },
+    jewels: { name: 'Casa Diamante', at: [1600, 1320], r: 70 },
+    dealer: { name: 'Cometa Motors', at: [320, 720], r: 80 },
+    safehouse: { name: 'La Rosa House', at: [960, 1800], r: 80 },
+    docks: { name: 'The Docks', at: [2240, 1680], r: 80 },
+    stadium: { name: 'Estadio Verde', at: [2240, 720], r: 90 },
+    plaza: { name: 'Palma Plaza', at: [1280, 480], r: 90 },
+    yacht: { name: 'Yacht La Rosa', at: [2300, 1690], r: 80 },
+    pier: { name: 'Pier', at: [2040, 1860], r: 80 },
   },
+
+  // People.
+  hero: 'Dante Vega',
+  boss: "Carmen 'La Rosa' Ibarra",
+  fence: "El Gato",
+  hacker: 'Nadia',
+
+  // Tuning (all fresh numbers for this build).
+  tuning: {
+    walkSpeed: 195, sprintSpeed: 305, punchRange: 46, punchDamage: 34,
+    carAccel: 420, carBrake: 640, carReverse: 190, carTop: 430,
+    carTopSports: 540, carTurn: 2.9, carGrip: 3.4,
+    carHealth: 200, ramDamage: 1, ramCooldown: 2.5, ramPush: 260,
+    wallHitCooldown: 0.4, wallDamageRate: 0.045,
+    trafficCount: 14, pedCount: 26,
+    trafficSpeed: [130, 205], pedSpeed: [42, 78], pedFleeMult: 2.3,
+    heatSteal: 12, heatPunch: 6, heatPed: 18, heatAlarm: 20, heatCrash: 4,
+    heatDecay: 2.2, heatDecayHidden: 6.0,
+    starsAt: [10, 30, 50, 70, 90], // heat thresholds for 1..5 stars
+    policeByStars: [1, 2, 3, 4, 6],
+    heliAtStars: 3, roadblockAtStars: 4,
+    policeChaseSpeed: 505, policeRamRange: 52,
+    chopPay: 125, startMoney: 200,
+    shop: { armor: 450, turbo: 750, tires: 275 },
+    bustPenalty: 0.10, // fraction of money lost on a bust
+    dayLength: 150, // seconds per in-game hour
+  },
+
+  // Palette.
+  colors: {
+    grass: '#5d8a4a', grassDry: '#7a9a52', sand: '#d9c48a', sea: '#2f6f8f',
+    seaDeep: '#25607e', asphalt: '#3a3d44', asphaltEdge: '#2c2f36',
+    sidewalk: '#8d8f96', line: '#e8d44d', buildingRoof: '#b0563a',
+    buildingRoof2: '#7a6a8f', buildingRoof3: '#4f7a5a', buildingWall: '#c9b18c',
+    park: '#4c7a3d', lot: '#555860', plaza: '#a89a7a',
+  },
+
+  // Radio stations (synthesised, no audio files).
+  radio: [
+    { name: 'SOL FM', desc: 'sunset drive', root: 55, minor: true, bpm: 96 },
+    { name: 'BAY 102', desc: 'marina nights', root: 60, minor: false, bpm: 112 },
+  ],
+
+  // Controls shown on the title screen.
+  controls: [
+    ['WASD / Arrows', 'walk / drive'],
+    ['Shift', 'sprint'],
+    ['E', 'enter car / interact'],
+    ['F', 'punch'],
+    ['Space', 'handbrake'],
+    ['G', 'garage shop (at Vega Motors, in a car)'],
+    ['R', 'change radio station'],
+    ['M', 'mute'],
+    ['P / Esc', 'pause'],
+    ['O', 'autopilot demo'],
+  ],
 };
 
-export function starsForHeat(heat) {
-  if (heat < 8) return 0;
-  if (heat < 28) return 1;
-  if (heat < 48) return 2;
-  if (heat < 68) return 3;
-  if (heat < 88) return 4;
-  return 5;
-}
+// Mission reward table (money, respect) for the eight story missions.
+export const MISSION_REWARDS = [
+  [500, 8], [700, 10], [900, 12], [1500, 15],
+  [1800, 18], [2200, 20], [3000, 25], [5000, 40],
+];
