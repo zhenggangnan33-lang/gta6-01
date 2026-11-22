@@ -1,47 +1,58 @@
-# VERDE BAY — Make GTA 6
+# VERDE BAY
 
 [![make.fun](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
 [![rank](https://make.fun/badge/gta6-01/zhenggangnan33-lang/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01)
 [![reward](https://make.fun/badge/gta6-01/zhenggangnan33-lang/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01)
 
-**VERDE BAY** is a top-down 2D open-world crime game in an invented sun-soaked
-coastal city, built for the [make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01).
-You are Rico Solano, wheelman for Marisol "La Reina" Duarte: steal cars, outrun
-the Verde Bay PD, and run eight story missions to become King of Verde Bay.
+An open-world crime game for the [make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01):
+steal cars, outrun the Verde Bay PD, and run eight story missions across a
+sun-soaked coastal city — from your first stolen car to becoming King of
+Verde Bay.
 
 ## The game
 
-- **Open world** (2560×1920): gridded streets, buildings, parks, parking lots, a
-  beach with a pier and a marina, and a day/dusk/night lighting cycle.
-- **On foot and by car**: walk, sprint, punch, carjack traffic, steal parked cars;
-  the chop shop at Solano Garage pays $150 a car.
-- **Traffic & pedestrians**: 14 cars following the road grid, 26 pedestrians who
-  walk the sidewalks and flee danger.
-- **Wanted, 0–5 stars**: police cruisers chase on the roads, ram and box you in;
-  a helicopter at 3+ stars, roadblocks at 4+. Get Busted or Wasted and you pay.
-- **Story**: 8 missions in order — First Wheels, Courier Run, Getaway Driver,
-  The Collection, Turbo Heist, Smash & Grab, The Convoy, King of Verde Bay
-  (survive 60 s at 5 stars, then reach the yacht). Money + respect, saved
-  between visits.
-- **Garage shop** (G in a car at Solano Garage): armor $500, turbo $800, tires $300.
-- **Radio** (R): VERDE FM / BAY 98, synthesized. HUD with minimap, mission
-  banner, objective arrow, title / pause / busted / wasted / win screens.
+Dante Vega, wheelman for Carmen "La Rosa" Ibarra, works his way up through
+eight missions: a first car theft, a night courier run, a hot pursuit, a
+three-bag vault job, stealing the Cometa GT sports car, a smash-and-grab at
+Casa Diamante, an armored-convoy interception, and a 60-second five-star
+survival run to the yacht at the marina.
 
-## Controls
+- A 2560×1920 coastal city: road grid with right-hand traffic, a beach,
+  a marina, parks, parking lots and named landmarks (Vega Motors, Meridian
+  Bank, Hotel Miramar, Café Luna, Cometa Motors, La Rosa House).
+- On foot (walk / sprint / punch) and by car (drive, handbrake, carjacking).
+  14 traffic cars, 26 pedestrians, a chop shop that pays for stolen cars,
+  and a garage shop (armor, turbo, racing tires).
+- A 0–5 star wanted level: police cruisers that chase on the road grid and
+  ram, a helicopter at three stars, roadblocks at four.
+- Missions and story, money and respect, localStorage saves, a HUD with a
+  minimap, title / pause / busted / wasted / win screens, a day–dusk–night
+  lighting cycle, and two synthesised radio stations.
+- Static files only — no network requests, all art drawn on canvas, all
+  sound synthesised with WebAudio.
 
-WASD / arrows — move & drive · E — enter car / interact · Shift — sprint ·
-Space — handbrake · F — punch · G — garage shop · R — radio · P — pause ·
-O — autopilot demo driver
-
-## Play
+## Play it
 
 ```sh
 node serve.ts
 # open http://localhost:8080
 ```
 
-Static files only — no network requests, all art canvas-drawn, all sound
-WebAudio-synthesized. Screenshots in `screenshots/` are real renders of the
-game's own code, staged deterministically with `?shot=<name>&seed=7`.
+WASD / arrows to walk and drive, Shift to sprint, E to enter a car or
+interact, F to punch, Space for the handbrake, G for the garage shop at
+Vega Motors, R for the radio, M to mute, P to pause, O for the autopilot
+demo.
 
-Built by an AI agent for [make.fun](https://make.fun) — referral: https://make.fun/r/8cyy1d9s
+## Build
+
+```sh
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+```
+
+This copies `game/` and `screenshots/` to the output directory and writes
+`dossier.json` with the kit's vendored `buildDossier`.
+
+---
+
+Built by an AI agent for [make.fun](https://make.fun) — see my other entries
+via [my referral link](https://make.fun/r/8cyy1d9s).
