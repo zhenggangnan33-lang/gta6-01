@@ -1,86 +1,73 @@
-// VERDE BAY — boot, game loop, screens, shot mode, autopilot toggle.
-// Entry point: game/index.html loads this module. It owns the canvas,
-// the clock, the save, and the bridge the test harness reads
-// (window.__game and window.__shotReady).
+// VERDE BAY v2 — entry point. Boots the canvas, wires input, audio
+// and the render loop, and exposes the game to the make.fun harness
+// through `window.__game`. In shot mode (?shot=<id>) it stages one
+// screenshot scene and renders a single frame.
 
 import { CFG } from './config.js';
 import { createWorld } from './world.js';
+import { createRenderer } from './render.js';
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
-import { drawWorld } from './render.js';
-import { stageShot, createAutopilot } from './shots.js';
+import { makeShotWorld } from './shots.js';
 
 const params = new URLSearchParams(location.search);
-const seedParam = Number(params.get('seed'));
-const SEED = Number.isFinite(seedParam) && seedParam > 0 ? Math.floor(seedParam) : 23;
-const shotName = params.get('shot');
+const shotId = params.get('shot');
+const seed = CFG.seed;
 
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+canvas.width = 1280;
+canvas.height = 720;
 
-function fitCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-fitCanvas();
-window.addEventListener('resize', fitCanvas);
+let world, renderer, input, audio;
 
-const world = createWorld(SEED);
-const input = createInput(canvas);
-input.attach();
-const audio = createAudio();
-const autopilot = createAutopilot();
-
-// What the harness and the dossier screenshots read.
-window.__game = { world };
-window.__shotReady = false;
-
-if (shotName) {
-  // Staged screenshot: a fixed set-up, no save, no title wait.
-  stageShot(world, shotName);
+if (shotId) {
+  const made = makeShotWorld(seed, shotId);
+  world = made.w;
+  renderer = createRenderer(canvas);
+  // One still frame for the screenshot.
+  renderer.draw(world, 0);
+  window.__game = { world, shot: made.shot.id, ready: true };
 } else {
-  // Normal play: pick up where the player left off, if there is a save.
+  world = createWorld(seed);
+  renderer = createRenderer(canvas);
+  input = createInput();
+  audio = createAudio();
   world.load();
-}
 
-let last = performance.now();
-let shotFlagged = false;
+  window.addEventListener('pointerdown', () => audio.ensure(), { once: true });
+  window.addEventListener('keydown', () => audio.ensure(), { once: true });
 
-function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
+  let last = performance.now();
+  let acc = 0;
+  let lastStation = -1;
+  const STEP = 1 / 60;
 
-  // Screen transitions on Enter.
-  if (input.pressed.has('Enter')) {
-    audio.ensure();
-    if (world.state === 'title') world.startGame();
-    else if (world.state === 'busted' || world.state === 'wasted') world.respawn();
-    else if (world.state === 'win') world.state = 'playing';
-    else if (world.state === 'paused') world.state = 'playing';
-  }
-  // Autopilot demo driver.
-  if (input.pressed.has('KeyO')) {
-    world.autopilot = !world.autopilot;
-    world.flash(world.autopilot ? 'Autopilot driving.' : 'Autopilot off — you drive.');
-  }
-
-  if (world.autopilot && world.state === 'playing') {
-    autopilot.step(world, input, dt);
-  }
-
-  world.update(dt, input);
-  audio.update(dt, world);
-  drawWorld(ctx, world, canvas.width, canvas.height);
-  input.endFrame();
-
-  if (shotName && !shotFlagged) {
-    shotFlagged = true;
-    window.__shotReady = true;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    let dt = (now - last) / 1000;
+    last = now;
+    if (dt > 0.1) dt = 0.1; // tab was in the background
+    acc += dt;
+    while (acc >= STEP) {
+      acc -= STEP;
+      // Enter starts the game, and recovers from busted / wasted / win.
+      if (input.pressed.has('Enter')) {
+        if (world.state === 'title') world.startGame();
+        else if (world.state === 'busted' || world.state === 'wasted') world.respawn();
+        else if (world.state === 'win') world.state = 'playing';
+      }
+      world.update(STEP, input);
+      input.endFrame();
+    }
+    renderer.draw(world, dt);
+    // Sound follows the world.
+    const p = world.player;
+    audio.engine(p.car ? Math.abs(p.car.speed) / 500 : 0, !!p.car && world.state === 'playing');
+    audio.siren(world.stars >= 2 && world.state === 'playing');
+    if (world.station !== lastStation) { lastStation = world.station; audio.setStation(world.station); }
+    audio.setMuted(world.muted);
   }
   requestAnimationFrame(frame);
+
+  window.__game = { world, ready: true };
 }
-
-requestAnimationFrame(frame);
-
-// Keep the save fresh when the tab closes mid-run.
-window.addEventListener('beforeunload', () => { if (world.state === 'playing') world.save(); });

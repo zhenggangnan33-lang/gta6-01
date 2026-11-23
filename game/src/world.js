@@ -1,13 +1,15 @@
-// VERDE BAY simulation: the player, cars, police, pedestrians, the wanted
-// system, the chop shop, the garage shop, saves, and the mission driver.
-// Written fresh for this build; the lessons of the earlier builds are
-// baked in (right-hand traffic, push-out after rams, throttled E, the chop
-// shop only paying for cars driven in from outside, wall-hit cooldowns).
+// VERDE BAY v2 simulation: the player, cars, police, pedestrians, the
+// wanted system, the chop shop, the garage shop, hidden cash stashes,
+// the clean-getaway bonus, particles, saves, and the mission driver.
+// v1's hard-won fixes are all kept: right-hand traffic, push-out after
+// rams, throttled E, the chop shop only paying for cars driven in from
+// outside, wall-hit cooldowns, the sports-car E hint.
 
 import { CFG } from './config.js';
 import { genCity } from './city.js';
 import { makeRng } from './random.js';
 import { MISSIONS, startMission, updateMission, missionReward } from './missions.js';
+import { createParticles } from './particles.js';
 
 const T = CFG.tuning;
 const P = CFG.places;
@@ -43,10 +45,13 @@ export function createWorld(seed, opts = {}) {
     upgrades: { armor: false, turbo: false, tires: false },
     autopilot: false,
     keysDown: new Set(),
-    stats: { stolen: 0, missions: 0, busted: 0, playSeconds: 0 },
-    _eT: 0, _saveT: 0, _routeT: 0, _bustT: 0, _enterCar: null,
-    saveKey: 'verdebay-save-v3',
+    stats: { stolen: 0, missions: 0, busted: 0, playSeconds: 0, stashes: 0, getaways: 0 },
+    _eT: 0, _saveT: 0, _routeT: 0, _bustT: 0, _enterCar: null, _getawayPaid: false,
+    _smokeT: 0, _exhaustT: 0,
+    saveKey: 'verdebay-save-v4',
+    saveInfo: null,
   };
+  w.particles = createParticles();
 
   // ---------- helpers ----------
   w.flash = (text) => { w.messages.push({ text, t: 5 }); if (w.messages.length > 4) w.messages.shift(); };
@@ -95,19 +100,26 @@ export function createWorld(seed, opts = {}) {
     }
   };
 
-  // ---------- setup ----------
-  const spawn = { x: 1240, y: 900 };
+  // Spawn in the open south-east corner of the garage forecourt:
+  // clear of the workshop (north-west corner) and of the two parked
+  // cars, so the player never starts inside a solid.
+  const spawn = { x: 1360, y: 1000 };
   w.player = {
     x: spawn.x, y: spawn.y, angle: -Math.PI / 2, health: 100, maxHealth: 100,
     money: T.startMoney, respect: 0, car: null, speed: 0, vx: 0, vy: 0,
     punchT: 0, punchCd: 0, walkPhase: 0,
   };
 
+  // Hidden cash stashes (fixed spots from the config).
+  w.stashes = CFG.stashes.map(([x, y]) => ({ x, y, taken: false }));
+
   // Traffic cars on the roads.
   for (let i = 0; i < T.trafficCount; i++) {
     const pt = city.randomRoadPoint(rng);
-    const car = w.addCar({ x: pt.x, y: pt.y, angle: rng.range(0, Math.PI * 2), traffic: true, model: rng.chance(0.12) ? 'taxi' : 'sedan', color: rng.chance(0.12) ? TAXI_COLOR : undefined });
-    car.cruise = rng.range(T.trafficSpeed[0], T.trafficSpeed[1]);
+    const roll = rng.next();
+    const model = roll < T.vanChance ? 'van' : roll < T.vanChance + T.taxiChance ? 'taxi' : 'sedan';
+    const car = w.addCar({ x: pt.x, y: pt.y, angle: rng.range(0, Math.PI * 2), traffic: true, model, color: model === 'taxi' ? TAXI_COLOR : undefined });
+    car.cruise = rng.range(T.trafficSpeed[0], T.trafficSpeed[1]) * (model === 'van' ? 0.85 : 1);
     const dest = city.randomRoadPoint(rng);
     car.route = city.route(pt.x, pt.y, dest.x, dest.y);
     car.routeIdx = 0;
@@ -187,7 +199,7 @@ export function createWorld(seed, opts = {}) {
     try {
       localStorage.setItem(w.saveKey, JSON.stringify({
         money: w.player.money, respect: w.player.respect, missionIdx: w.missionIdx,
-        upgrades: w.upgrades, best: w.stats.missions,
+        upgrades: w.upgrades, best: w.stats.missions, stashes: w.stats.stashes,
       }));
     } catch (e) { /* storage unavailable: play on without saving */ }
   };
@@ -200,6 +212,7 @@ export function createWorld(seed, opts = {}) {
       w.player.respect = s.respect ?? 0;
       w.upgrades = { ...w.upgrades, ...(s.upgrades || {}) };
       if (s.upgrades?.armor) w.player.maxHealth = 200;
+      w.saveInfo = { money: w.player.money, respect: w.player.respect, missionIdx: s.missionIdx ?? 0, stashes: s.stashes ?? 0 };
       if (Number.isInteger(s.missionIdx) && s.missionIdx > 0 && s.missionIdx < MISSIONS.length) {
         startMission(w, s.missionIdx);
       }
@@ -219,6 +232,7 @@ export function createWorld(seed, opts = {}) {
     w.stats.playSeconds += dt;
     for (const m of w.messages) m.t -= dt;
     w.messages = w.messages.filter((m) => m.t > 0);
+    w.particles.update(dt);
     if (w.state !== 'playing') return;
 
     const p = w.player;
@@ -281,6 +295,7 @@ export function createWorld(seed, opts = {}) {
         if (d < T.punchRange) {
           ped.down = 4;
           ped.x += Math.cos(p.angle) * 26; ped.y += Math.sin(p.angle) * 26;
+          w.particles.burst(ped.x, ped.y, 8, '#ffd24d', 120);
           w.addHeat(T.heatPunch);
           w.flash('You decked a pedestrian. Someone saw that.');
         }
@@ -298,8 +313,24 @@ export function createWorld(seed, opts = {}) {
     stepHeli(w, dt);
     stepCollisions(w, dt);
 
-    // Chop shop: a car driven in from outside sells for cash.
-    if (p.car && p.car._wasOutside && dist(p.x, p.y, P.garage.at[0], P.garage.at[1]) < 60) {
+    // Hidden stash pickup (on foot or by car, within 30 px).
+    for (const s of w.stashes) {
+      if (!s.taken && dist(p.x, p.y, s.x, s.y) < 30) {
+        s.taken = true;
+        p.money += CFG.stashPay;
+        w.stats.stashes++;
+        w.particles.burst(s.x, s.y, 14, '#7ee787', 160);
+        w.flash('Hidden stash! +$' + CFG.stashPay + ' (' + w.stats.stashes + '/' + w.stashes.length + ').');
+      }
+    }
+
+    // Chop shop: a car driven in from outside sells for cash — but
+    // only when the player pulls in slow. A drive-by at speed does not
+    // sell the car out from under the player mid-mission. Mission cars
+    // (the Cometa GT, the armored truck) are never sold: losing one
+    // would soft-lock its mission.
+    if (p.car && !p.car.sports && !p.car.convoy && p.car._wasOutside && Math.abs(p.car.speed) < 80 &&
+      dist(p.x, p.y, P.garage.at[0], P.garage.at[1]) < 60) {
       const car = p.car;
       p.money += T.chopPay;
       p.car = null;
@@ -316,17 +347,40 @@ export function createWorld(seed, opts = {}) {
     const oldStars = w.stars;
     w.stars = starsFromHeat(w.heat);
     if (w.stars > oldStars) {
+      w._getawayPaid = false;
       w.flash('Wanted level ' + w.stars + (w.stars >= 3 ? ' — the helicopter is up!' : ' — the cops are coming!'));
       const need = T.policeByStars[w.stars - 1] || 0;
       const alive = w.police.filter((c) => !c.wrecked).length;
       if (need > alive) w.spawnPolice(need - alive);
       if (w.stars >= T.roadblockAtStars && w.roadblocks.length === 0) placeRoadblocks(w);
     }
+    // Clean getaway: lose 2+ stars down to zero, get paid for it.
+    if (oldStars >= 2 && w.stars === 0 && !w._getawayPaid) {
+      w._getawayPaid = true;
+      p.money += CFG.getawayBonus;
+      w.stats.getaways++;
+      w.flash('Clean getaway! +$' + CFG.getawayBonus + ' — La Rosa pays for cool heads.');
+    }
     // Heat decays when no police are close; the helicopter keeps it up.
     const nearCop = w.police.some((c) => !c.wrecked && dist(c.x, c.y, p.x, p.y) < 520);
     if (!nearCop && !w.heli.active) w.heat = Math.max(0, w.heat - T.heatDecay * dt);
     else if (!w.heli.active) w.heat = Math.max(0, w.heat - T.heatDecay * 0.35 * dt);
     if (w.stars < T.roadblockAtStars) w.roadblocks = [];
+
+    // Exhaust puffs + damage smoke from the player's car.
+    if (p.car && !p.car.wrecked) {
+      w._exhaustT -= dt;
+      if (Math.abs(p.car.speed) > 200 && w._exhaustT <= 0) {
+        w._exhaustT = 0.09;
+        const bx = p.car.x - Math.cos(p.car.angle) * 24, by = p.car.y - Math.sin(p.car.angle) * 24;
+        w.particles.puff(bx, by, 1);
+      }
+      w._smokeT -= dt;
+      if (p.car.health < p.car.maxHealth * 0.5 && w._smokeT <= 0) {
+        w._smokeT = 0.12;
+        w.particles.smoke(p.car.x, p.car.y - 6, 1);
+      }
+    }
 
     // Mission progress.
     if (w.missionIdx < MISSIONS.length && updateMission(w, dt)) {
@@ -416,15 +470,23 @@ export function createWorld(seed, opts = {}) {
     car.speed = clamp(car.speed, -T.carReverse, top * topMul);
     if (Math.abs(car.speed) < 4 && !fwd && !rev) car.speed = 0;
 
+    // Skid marks while handbraking at speed.
+    if (brake && Math.abs(car.speed) > 140) {
+      w.particles.skid(car.x - Math.cos(car.angle) * 16, car.y - Math.sin(car.angle) * 16, car.angle);
+    }
+
     const grip = T.carGrip * (w.upgrades.tires ? 1.3 : 1);
     const turnRate = T.carTurn * clamp(Math.abs(car.speed) / 140, 0, 1) * (brake ? 1.5 : 1);
-    car.angle += steer * turnRate * dt * Math.sign(car.speed || 1) * (car.speed < 0 ? -1 : 1);
+    // The turn follows the direction of travel: reversing with D swings
+    // the nose left, as in a real car (and the car cannot turn in place).
+    car.angle += steer * turnRate * dt * Math.sign(car.speed);
     const vx = Math.cos(car.angle) * car.speed;
     const vy = Math.sin(car.angle) * car.speed;
     const res = w.city.moveCircle(car.x, car.y, 15, vx * dt, vy * dt);
     if ((res.hitX || res.hitY) && Math.abs(car.speed) > 150 && car._wallT <= 0) {
       car._wallT = T.wallHitCooldown;
       car.health -= Math.abs(car.speed) * T.wallDamageRate;
+      w.particles.burst(car.x, car.y, 6, '#ffb84d', 140);
       if (car.health <= 0) wreckCar(w, car);
     }
     car._wallT = Math.max(0, car._wallT - dt);
@@ -439,6 +501,7 @@ export function createWorld(seed, opts = {}) {
     if (car.wrecked) return;
     car.wrecked = true;
     car.speed = 0;
+    w.particles.burst(car.x, car.y, 18, '#8a8f96', 190);
     const p = w.player;
     if (p.car === car) {
       p.car = null;
@@ -451,13 +514,18 @@ export function createWorld(seed, opts = {}) {
   }
 
   function driveAlongRoute(w, car, dt, cruise, arriveR = 40) {
-    // Follow car.route (BFS waypoints) with right-hand lane offset.
+    // Follow car.route (BFS waypoints) on the RIGHT-hand side of the
+    // road: the aim point is the waypoint shifted right of the travel
+    // direction by CFG.lane.
     if (!car.route || car.routeIdx >= car.route.length) return true; // arrived
     const wp = car.route[car.routeIdx];
     const d = dist(car.x, car.y, wp.x, wp.y);
     if (d < arriveR) { car.routeIdx++; return car.routeIdx >= car.route.length; }
-    const want = Math.atan2(wp.y - car.y, wp.x - car.x);
-    // Lane offset: aim slightly right of the waypoint direction.
+    const want0 = Math.atan2(wp.y - car.y, wp.x - car.x);
+    // Right of heading (cos a, sin a) is (-sin a, cos a) on screen.
+    const tx = wp.x + (-Math.sin(want0)) * CFG.lane;
+    const ty = wp.y + Math.cos(want0) * CFG.lane;
+    const want = Math.atan2(ty - car.y, tx - car.x);
     const diff = angDiff(car.angle, want);
     const steer = clamp(diff * 2.2, -1, 1);
     car.angle += steer * 2.6 * dt * (car.speed < 0 ? -1 : 1);
@@ -621,6 +689,10 @@ export function createWorld(seed, opts = {}) {
   function stepHeli(w, dt) {
     const p = w.player;
     if (w.stars >= T.heliAtStars) {
+      if (!w.heli.active) {
+        // Appear near the player on first activation, then track.
+        w.heli.x = p.x; w.heli.y = p.y - 90;
+      }
       w.heli.active = true;
       const tx = p.x, ty = p.y - 90;
       w.heli.x += (tx - w.heli.x) * Math.min(1, dt * 1.4);
@@ -635,15 +707,18 @@ export function createWorld(seed, opts = {}) {
 
   function stepCollisions(w, dt) {
     // Car-car: push apart, damage on hard hits (police vs player excluded
-    // — the ram mechanic handles that pair).
+    // — the ram mechanic handles that pair). Separation stops at 44 px:
+    // cars are 40 px long, so 30 px still left them visibly overlapped.
     const list = w.cars.filter((c) => !c.wrecked);
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i], b = list[j];
-        const d = dist(a.x, a.y, b.x, b.y);
-        if (d >= 30 || d === 0) continue;
-        const nx = (b.x - a.x) / d, ny = (b.y - a.y) / d;
-        const push = (30 - d) / 2;
+        let d = dist(a.x, a.y, b.x, b.y);
+        if (d >= 44) continue;
+        let nx, ny;
+        if (d < 0.01) { nx = 1; ny = 0; d = 0.01; } // exactly stacked: pick a direction
+        else { nx = (b.x - a.x) / d; ny = (b.y - a.y) / d; }
+        const push = (44 - d) / 2;
         a.x -= nx * push; a.y -= ny * push;
         b.x += nx * push; b.y += ny * push;
         const rel = Math.abs(a.speed - b.speed) + Math.abs(a.speed) * 0.2;
@@ -651,6 +726,7 @@ export function createWorld(seed, opts = {}) {
         if (rel > 150 && !isPolicePair) {
           const dmg = Math.min(12, (rel - 150) * 0.04);
           a.health -= dmg; b.health -= dmg;
+          w.particles.burst((a.x + b.x) / 2, (a.y + b.y) / 2, 5, '#ffb84d', 120);
           if (a.health <= 0) wreckCar(w, a);
           if (b.health <= 0) wreckCar(w, b);
         }

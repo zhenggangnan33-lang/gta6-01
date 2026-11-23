@@ -1,24 +1,18 @@
-// Seeded randomness for VERDE BAY. sfc32 (Small Fast Chaotic) — a small,
-// fast generator with good distribution. Every random choice in the game
-// (map layout, traffic, pedestrians, mission spawns) draws from one of
-// these, so a fixed seed replays the same city.
+// Seeded randomness for VERDE BAY v2. mulberry32 — a tiny, fast
+// generator with a clean uniform distribution. One seeded stream drives
+// every random choice in the game (map layout, traffic, pedestrians,
+// mission spawns), so a fixed seed replays the same city every time.
 
 export function makeRng(seed) {
-  // Hash the seed into four 32-bit words.
-  let a = (seed ^ 0x9e3779b9) >>> 0;
-  let b = (seed * 2654435761) >>> 0;
-  let c = (seed ^ 0x85ebca6b) >>> 0;
-  let d = (seed * 40503 + 0x27d4eb2f) >>> 0;
+  let a = seed >>> 0;
   const rng = {
     next() {
-      // sfc32 step.
-      let t = (a + b + d) >>> 0;
-      d = (d + 1) >>> 0;
-      a = b ^ (b >>> 9);
-      b = (c + ((c << 3) >>> 0)) >>> 0;
-      c = ((c << 21) | (c >>> 11)) >>> 0;
-      c = (c + t) >>> 0;
-      return t / 4294967296;
+      // mulberry32 step.
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     },
     range(lo, hi) { return lo + rng.next() * (hi - lo); },
     int(lo, hi) { return Math.floor(rng.range(lo, hi + 1)); },

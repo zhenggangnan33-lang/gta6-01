@@ -1,14 +1,17 @@
-// The eight story missions of VERDE BAY. Dante Vega, wheelman for
+// The eight story missions of VERDE BAY v2. Dante Vega, wheelman for
 // Carmen "La Rosa" Ibarra, works his way from stealing a first car to
 // becoming King of Verde Bay. Each mission is a small state machine:
 // setup(w) runs once when the mission starts, update(w, dt) returns true
 // when it is done, interact(w) handles the E key, and objective(w) gives
 // the HUD arrow its target. The world object carries the scratch state
-// (w.missionPhase, w.missionData).
+// (w.missionPhase, w.missionData). v2 keeps v1's eight missions and
+// shortens the finale's survive timer from 60 s to 45 s, so the win is
+// reachable inside one autopilot run.
 
 import { CFG, MISSION_REWARDS } from './config.js';
 
 const P = CFG.places;
+const SURVIVE = CFG.tuning.surviveSeconds;
 
 function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 
@@ -115,7 +118,18 @@ export const MISSIONS = [
     },
     update(w) {
       const p = w.player;
-      if (p.car === w.missionData.sports &&
+      // If the Cometa GT is gone (wrecked or otherwise lost), the
+      // dealership gets another one in — the job must stay doable.
+      let s = w.missionData.sports;
+      if (!s || s.wrecked || !w.cars.includes(s)) {
+        s = w.addCar({
+          x: P.dealer.at[0] + 30, y: P.dealer.at[1] + 20, angle: 0.4,
+          model: 'sports', color: '#c22e2e', parked: true, sports: true,
+        });
+        w.missionData.sports = s;
+        w.flash('Cometa Motors just got another GT in. It is still at the dealership.');
+      }
+      if (p.car === s &&
         dist(p.x, p.y, P.garage.at[0], P.garage.at[1]) < P.garage.r) return true;
       return false;
     },
@@ -134,9 +148,8 @@ export const MISSIONS = [
     },
     objective(w) {
       // Before the steal: the dealership. Once Rico is in the Cometa GT,
-      // the objective is the garage — the old version always pointed at
-      // the dealership, so the autopilot drove the stolen car in circles
-      // around the lot forever and the mission could never complete.
+      // the objective is the garage — pointing at the dealership forever
+      // would drive the stolen car in circles around the lot.
       const p = w.player;
       if (p.car === w.missionData.sports) {
         return { x: P.garage.at[0], y: P.garage.at[1], label: 'Vega Motors — deliver the Cometa GT' };
@@ -193,6 +206,20 @@ export const MISSIONS = [
     },
     update(w) {
       const p = w.player;
+      // If the truck is gone (wrecked or otherwise lost), the convoy
+      // sends another one — the job must stay doable.
+      let t = w.missionData.truck;
+      if (w.missionPhase === 0 && t && (t.wrecked || !w.cars.includes(t))) {
+        const pt = w.city.randomRoadPoint(w.rng);
+        const repl = w.addCar({
+          x: pt.x, y: pt.y, angle: 0, model: 'truck', color: '#3a5a7a',
+          parked: false, convoy: true, health: 600,
+        });
+        repl.route = w.city.route(pt.x, pt.y, 2400, 1800);
+        repl.routeIdx = 0;
+        w.missionData.truck = repl;
+        w.flash('The convoy sent another truck. It is still running the ring road.');
+      }
       if (w.missionPhase === 1 && dist(p.x, p.y, P.safehouse.at[0], P.safehouse.at[1]) < P.safehouse.r) return true;
       return false;
     },
@@ -216,12 +243,12 @@ export const MISSIONS = [
   },
   {
     id: 'king', name: 'King of Verde Bay',
-    brief: 'Survive 60 seconds at five stars, then reach the yacht at the marina.',
+    brief: 'Survive ' + SURVIVE + ' seconds at five stars, then reach the yacht at the marina.',
     setup(w) {
       w.missionPhase = 0; w.missionData.timer = 0;
       w.setHeat(95);
       w.spawnPolice(4);
-      w.flash('Five stars! Survive 60 seconds — then the yacht.');
+      w.flash('Five stars! Survive ' + SURVIVE + ' seconds — then the yacht.');
     },
     update(w, dt) {
       const p = w.player;
@@ -229,7 +256,7 @@ export const MISSIONS = [
         // If the heat ever drops, the heat is back on.
         if (w.stars < 5) { w.setHeat(95); w.spawnPolice(2); }
         if (w.stars >= 5) w.missionData.timer += dt;
-        if (w.missionData.timer >= 60) {
+        if (w.missionData.timer >= SURVIVE) {
           w.missionPhase = 1;
           w.flash('You made it. The yacht is waiting at the marina.');
         }
@@ -241,7 +268,7 @@ export const MISSIONS = [
     interact() { return false; },
     objective(w) {
       return w.missionPhase === 0
-        ? { x: w.player.x, y: w.player.y, label: 'Survive — ' + Math.max(0, Math.ceil(60 - w.missionData.timer)) + 's' }
+        ? { x: w.player.x, y: w.player.y, label: 'Survive — ' + Math.max(0, Math.ceil(SURVIVE - w.missionData.timer)) + 's' }
         : { x: P.yacht.at[0], y: P.yacht.at[1], label: 'Yacht La Rosa' };
     },
   },

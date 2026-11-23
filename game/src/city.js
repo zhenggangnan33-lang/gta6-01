@@ -1,23 +1,22 @@
-// City generation, road routing and collision for VERDE BAY.
-// The town is a road grid (see config.js): blocks between roads hold
-// buildings, parks or parking lots, laid out by a seeded generator. Cars
-// drive on the right-hand side of the road; routing is a BFS over the
-// intersection graph. All collision is circle-vs-rectangle, resolved
-// axis by axis, plus a push-out that rescues anything a ram shoved into
-// a wall.
+// City generation, road routing and collision for VERDE BAY v2.
+// The town is a road grid: blocks between roads hold buildings, parks
+// or parking lots, laid out by a seeded generator. Cars drive on the
+// right-hand side of the road; routing is a BFS over the intersection
+// graph. All collision is circle-vs-rectangle, resolved axis by axis,
+// plus a push-out that rescues anything a ram shoved into a wall.
 
 import { CFG } from './config.js';
 import { makeRng } from './random.js';
 
-const { roadsX, roadsY, roadHalf, lane } = CFG;
+const { roadsX, roadsY, roadHalf } = CFG;
 const W = CFG.world.w, H = CFG.world.h;
 
-function rectsOverlap(ax, ay, ar, bx, by, bw, bh) {
-  return ax < bx + bw && ax + ar > bx && ay < by + bh && ay + ar > by;
+function overlaps(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
 export function genCity(seed) {
-  const rng = makeRng(seed ^ 0x5f3759df);
+  const rng = makeRng(seed ^ 0x51ed270b);
   const solids = []; // {x, y, w, h} building rectangles
   const buildings = []; // solids + roof colour + height hint
   const parks = []; // {x, y, w, h, trees: [[x,y,r], ...]}
@@ -45,13 +44,13 @@ export function genCity(seed) {
   // The marina water is solid ground to no one: cars and people stay out
   // of it, except where the roads cross it (x=2400 and y=1800 stay open).
   const m = CFG.marina;
-  const roadX0 = 2400 - roadHalf - 6, roadX1 = 2400 + roadHalf + 6;
-  const roadY0 = 1800 - roadHalf - 6, roadY1 = 1800 + roadHalf + 6;
+  const rx0 = 2400 - roadHalf - 6, rx1 = 2400 + roadHalf + 6;
+  const ry0 = 1800 - roadHalf - 6, ry1 = 1800 + roadHalf + 6;
   solids.push(
-    { x: m.x0, y: m.y0, w: roadX0 - m.x0, h: roadY0 - m.y0 },
-    { x: roadX1, y: m.y0, w: m.x1 - roadX1, h: roadY0 - m.y0 },
-    { x: m.x0, y: roadY1, w: roadX0 - m.x0, h: m.y1 - roadY1 },
-    { x: roadX1, y: roadY1, w: m.x1 - roadX1, h: m.y1 - roadY1 },
+    { x: m.x0, y: m.y0, w: rx0 - m.x0, h: ry0 - m.y0 },
+    { x: rx1, y: m.y0, w: m.x1 - rx1, h: ry0 - m.y0 },
+    { x: m.x0, y: ry1, w: rx0 - m.x0, h: m.y1 - ry1 },
+    { x: rx1, y: ry1, w: m.x1 - rx1, h: m.y1 - ry1 },
   );
 
   for (let ix = 0; ix < roadsX.length - 1; ix++) {
@@ -78,7 +77,9 @@ export function genCity(seed) {
       }
       if (kind === 'plaza') {
         const trees = [];
-        for (let t = 0; t < 12; t++) trees.push([bx0 + 24 + rng.range(0, bw - 48), by0 + 24 + rng.range(0, bh - 48), rng.range(9, 15)]);
+        for (let t = 0; t < 12; t++) {
+          trees.push([bx0 + 24 + rng.range(0, bw - 48), by0 + 24 + rng.range(0, bh - 48), rng.range(9, 15)]);
+        }
         parks.push({ x: bx0, y: by0, w: bw, h: bh, plaza: true, trees });
         continue;
       }
@@ -94,7 +95,9 @@ export function genCity(seed) {
         // Park with trees.
         const trees = [];
         const n = rng.int(6, 11);
-        for (let t = 0; t < n; t++) trees.push([bx0 + 20 + rng.range(0, bw - 40), by0 + 20 + rng.range(0, bh - 40), rng.range(8, 14)]);
+        for (let t = 0; t < n; t++) {
+          trees.push([bx0 + 20 + rng.range(0, bw - 40), by0 + 20 + rng.range(0, bh - 40), rng.range(8, 14)]);
+        }
         parks.push({ x: bx0, y: by0, w: bw, h: bh, trees });
       } else if (roll < 0.38) {
         // Open parking lot (parked cars spawn here).
@@ -110,7 +113,7 @@ export function genCity(seed) {
           for (let tries = 0; tries < 12 && !ok; tries++) {
             x = bx0 + rng.range(0, bw - wdt);
             y = by0 + rng.range(0, bh - hgt);
-            ok = placed.every((p) => !rectsOverlap(x - 48, y - 48, wdt + 96, hgt + 96, p.x, p.y, p.w, p.h));
+            ok = placed.every((p) => !overlaps(x - 48, y - 48, wdt + 96, hgt + 96, p.x, p.y, p.w, p.h));
           }
           if (!ok) continue;
           const r = { x, y, w: wdt, h: hgt };
@@ -120,6 +123,18 @@ export function genCity(seed) {
         }
       }
     }
+  }
+
+  // Beach dressing: umbrellas and palm trees along the sand strip.
+  // Fixed hash positions, not RNG, so they never move with the seed.
+  const beachProps = [];
+  for (let x = 120; x < W - 120; x += 170) {
+    const h1 = ((x * 2654435761) >>> 0) / 4294967296;
+    const h2 = (((x + 77) * 40503) >>> 0) / 4294967296;
+    beachProps.push({
+      x: x + h1 * 60, y: CFG.beachY + 24 + h2 * 62,
+      umbrella: h1 < 0.6, hue: h2 < 0.5 ? '#e85d5d' : '#4b9ad9',
+    });
   }
 
   // Intersection graph.
@@ -161,7 +176,9 @@ export function genCity(seed) {
     while (queue.length) {
       const n = queue.shift();
       if (n === goal) break;
-      for (const m of adj[n]) if (prev[m] === -1) { prev[m] = n; queue.push(m); }
+      for (const nb of adj[n]) {
+        if (prev[nb] === -1) { prev[nb] = n; queue.push(nb); }
+      }
     }
     if (prev[goal] === -1) return [{ x: tx, y: ty }];
     const path = [];
@@ -254,8 +271,8 @@ export function genCity(seed) {
   const insideSolid = (x, y, r) => solids.some((s) => x + r > s.x && x - r < s.x + s.w && y + r > s.y && y - r < s.y + s.h);
 
   return {
-    seed, solids, buildings, parks, lots, nodes, adj,
+    seed, solids, buildings, parks, lots, nodes, adj, beachProps,
     blockOf, route, nearestNode, nearestRoadPoint, onRoad,
-    randomRoadPoint, moveCircle, pushOut, insideSolid, lane,
+    randomRoadPoint, moveCircle, pushOut, insideSolid,
   };
 }

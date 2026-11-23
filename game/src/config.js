@@ -1,11 +1,12 @@
-// VERDE BAY — configuration for the gta6-01 open-world crime game.
-// Third build: every value below was chosen fresh for this session.
-// The city is a 2560x1920 coastal town: a road grid, a beach along the
-// south edge, a marina in the south-east corner, and named landmarks the
-// story missions visit. Nothing here is copied from an earlier build.
+// VERDE BAY v2 — configuration for the gta6-01 open-world crime game.
+// A 2560x1920 coastal city: road grid, beach along the south edge, a
+// marina in the south-east corner, and named landmarks the story visits.
+// v2 keeps v1's proven map and tuning, and adds hidden cash stashes, a
+// clean-getaway bonus, a third radio station and neon landmark signs.
 
 export const CFG = {
   world: { w: 2560, h: 1920 },
+  seed: 23, // deterministic world seed (v1's proven map)
   // Road centrelines. Vertical roads run the full height, horizontal the
   // full width; intersections are the routing graph's nodes.
   roadsX: [160, 480, 800, 1120, 1440, 1760, 2080, 2400],
@@ -31,7 +32,26 @@ export const CFG = {
     plaza: { name: 'Palma Plaza', at: [1280, 480], r: 90 },
     yacht: { name: 'Yacht La Rosa', at: [2300, 1690], r: 80 },
     pier: { name: 'Pier', at: [2040, 1860], r: 80 },
+    casino: { name: 'Casino Sol', at: [2080, 1080], r: 70 },
   },
+
+  // Hidden cash stashes: fixed sidewalk spots near landmarks. Ten of
+  // them, $150 each, drawn as glowing markers and counted on the HUD.
+  stashes: [
+    [560, 420], [900, 900], [1500, 420], [1900, 1080], [700, 1560],
+    [1180, 1560], [2060, 420], [420, 900], [1560, 1800], [2280, 1080],
+  ],
+  stashPay: 150,
+  getawayBonus: 100, // paid once when the player loses 2+ stars clean
+
+  // Neon signs on landmark buildings (drawn at dusk and night).
+  neon: [
+    { x: 1920, y: 300, text: 'HOTEL MIRAMAR', color: '#ff7ad9' },
+    { x: 960, y: 540, text: 'MERIDIAN BANK', color: '#7ee787' },
+    { x: 2080, y: 1020, text: 'CASINO SOL', color: '#ffd24d' },
+    { x: 640, y: 1260, text: 'CAFÉ LUNA', color: '#7fb5ff' },
+    { x: 2240, y: 660, text: 'ESTADIO VERDE', color: '#ff9a5f' },
+  ],
 
   // People.
   hero: 'Dante Vega',
@@ -39,7 +59,8 @@ export const CFG = {
   fence: "El Gato",
   hacker: 'Nadia',
 
-  // Tuning (all fresh numbers for this build).
+  // Tuning. Kept from the proven v1 numbers except where noted: the
+  // autopilot was tuned against them, and changing them would break it.
   tuning: {
     walkSpeed: 195, sprintSpeed: 305, punchRange: 46, punchDamage: 34,
     carAccel: 420, carBrake: 640, carReverse: 190, carTop: 430,
@@ -58,10 +79,14 @@ export const CFG = {
     shop: { armor: 450, turbo: 750, tires: 275 },
     bustPenalty: 0.10, // fraction of money lost on a bust
     dayLength: 150, // seconds per in-game hour
+    surviveSeconds: 45, // mission 8: survive this long at five stars (v1: 60)
+    vanChance: 0.10, taxiChance: 0.12,
+    maxParticles: 140,
   },
 
   // Palette.
   colors: {
+    skyDay: '#8fc3e8', skyDusk: '#e8a56a', skyNight: '#0e1420',
     grass: '#5d8a4a', grassDry: '#7a9a52', sand: '#d9c48a', sea: '#2f6f8f',
     seaDeep: '#25607e', asphalt: '#3a3d44', asphaltEdge: '#2c2f36',
     sidewalk: '#8d8f96', line: '#e8d44d', buildingRoof: '#b0563a',
@@ -73,6 +98,7 @@ export const CFG = {
   radio: [
     { name: 'SOL FM', desc: 'sunset drive', root: 55, minor: true, bpm: 96 },
     { name: 'BAY 102', desc: 'marina nights', root: 60, minor: false, bpm: 112 },
+    { name: 'VERDE 88', desc: 'downtown cruise', root: 48, minor: true, bpm: 124 },
   ],
 
   // Controls shown on the title screen.
